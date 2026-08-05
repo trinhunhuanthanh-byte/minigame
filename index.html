@@ -2,411 +2,327 @@
 <html lang="vi">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>WebAR: Bắn Quái Vật Bằng Ngón Tay</title>
-    
-    <!-- Import Three.js cho 3D -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    
-    <!-- Import MediaPipe Hands cho Computer Vision -->
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
-
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>WebAR Finger Shooter - Trí Như</title>
     <style>
         body, html {
             margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: #000;
+            background-color: #000; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         }
+        #ar-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
+        video { display: none; } /* Ẩn video gốc, sẽ render video qua Three.js background */
         
-        /* Camera thực tế ở dưới cùng */
-        #video-background {
-            position: absolute;
-            top: 0; left: 0; width: 100vw; height: 100vh;
-            object-fit: cover;
-            z-index: 1;
-        }
-
-        /* Canvas 3D đè lên trên camera */
-        #ar-canvas {
-            position: absolute;
-            top: 0; left: 0; width: 100vw; height: 100vh;
-            z-index: 2;
-            pointer-events: none; /* Xuyên thao tác chạm xuống UI */
-        }
-
         /* UI Overlay */
         #ui-layer {
-            position: absolute;
-            top: 0; left: 0; width: 100%; height: 100%;
-            z-index: 3;
-            pointer-events: none; /* Chỉ click được vào các nút */
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            z-index: 10; pointer-events: none; /* Không chặn thao tác chạm */
         }
-
-        .hud-container {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 20px;
-            pointer-events: auto;
-        }
-
         #score-board {
-            background: rgba(255, 255, 255, 0.2);
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
-            padding: 10px 25px;
-            border-radius: 20px;
-            color: white;
-            font-size: 24px;
-            font-weight: bold;
-            border: 1px solid rgba(255,255,255,0.4);
+            position: absolute; top: 20px; left: 20px;
+            background: rgba(255, 255, 255, 0.8);
+            padding: 10px 20px; border-radius: 15px;
+            font-size: 24px; font-weight: bold; color: #333;
             box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         }
-
-        #cam-toggle-btn {
-            background: rgba(0, 122, 255, 0.8);
-            backdrop-filter: blur(5px);
-            color: white;
-            border: none;
-            padding: 12px 20px;
-            border-radius: 50px;
-            font-size: 16px;
-            font-weight: bold;
-            cursor: pointer;
+        #cam-toggle {
+            position: absolute; top: 20px; right: 20px;
+            background: #ff4757; color: white;
+            border: none; padding: 12px 20px; border-radius: 25px;
+            font-size: 16px; font-weight: bold; cursor: pointer;
+            pointer-events: auto; /* Cho phép bấm */
             box-shadow: 0 4px 6px rgba(0,0,0,0.2);
-            transition: 0.2s;
+            transition: background 0.3s;
         }
-        #cam-toggle-btn:active { transform: scale(0.95); }
-
-        /* Màn hình Loading */
-        #loading-screen {
-            position: absolute;
-            top: 0; left: 0; width: 100%; height: 100%;
-            background: #111;
-            z-index: 10;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            color: white;
-            transition: opacity 0.5s ease-out;
+        #cam-toggle:active { background: #ff6b81; }
+        #loading {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            background: rgba(0,0,0,0.7); color: #fff; padding: 20px; border-radius: 10px;
+            font-size: 18px; text-align: center;
         }
-        .spinner {
-            width: 50px; height: 50px;
-            border: 5px solid rgba(255,255,255,0.2);
-            border-top: 5px solid #007aff;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-            margin-bottom: 20px;
-        }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
+    <!-- Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- MediaPipe Hands -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 </head>
 <body>
 
-    <!-- Màn hình Loading khởi tạo AI -->
-    <div id="loading-screen">
-        <div class="spinner"></div>
-        <h2 id="loading-text">Đang tải mô hình AI & AR...</h2>
-        <p>Vui lòng cho phép quyền truy cập Camera</p>
-    </div>
-
-    <!-- Video luồng Camera -->
-    <video id="video-background" autoplay playsinline></video>
+    <video id="videoElement" autoplay playsinline></video>
+    <div id="ar-container"></div>
     
-    <!-- Canvas Three.js -->
-    <canvas id="ar-canvas"></canvas>
-
-    <!-- Giao diện UI -->
     <div id="ui-layer">
-        <div class="hud-container">
-            <div id="score-board">Điểm: <span id="score-value">0</span></div>
-            <button id="cam-toggle-btn">🔄 Đổi Camera</button>
-        </div>
+        <div id="score-board">Điểm: <span id="score">0</span></div>
+        <button id="cam-toggle">Lật Camera</button>
+        <div id="loading">Đang tải mô hình AI...<br><small>Vui lòng cho phép truy cập Camera</small></div>
     </div>
 
-<script>
-    /* ==========================================
-       PHẦN 1: CẤU HÌNH BIẾN TOÀN CỤC & THREE.JS
-       ========================================== */
-    let score = 0;
-    let cameraMode = 'environment'; // 'environment' = cam sau, 'user' = cam trước
-    let isFlipped = false;
-    let videoStream = null;
-    let handTrackingRunning = false;
-
-    // DOM Elements
-    const videoElement = document.getElementById('video-background');
-    const canvasElement = document.getElementById('ar-canvas');
-    const scoreElement = document.getElementById('score-value');
-    const loadingScreen = document.getElementById('loading-screen');
-    const camToggleBtn = document.getElementById('cam-toggle-btn');
-
-    // Cài đặt không gian Three.js
-    const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
-    camera.position.set(0, 1.5, 5); // Camera ở vị trí người nhìn (cao 1.5m)
-
-    const renderer = new THREE.WebGLRenderer({ canvas: canvasElement, alpha: true, antialias: true });
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-
-    // Ánh sáng cho nhân vật 3D đẹp hơn
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
-    scene.add(ambientLight);
-    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    dirLight.position.set(5, 10, 5);
-    scene.add(dirLight);
-
-    // Hệ thống toạ độ 3D: Mặt đất giả lập (ẩn) để neo nhân vật
-    const groundZ = -3; // Độ sâu mặt đất
-    
-    /* ==========================================
-       PHẦN 2: HỆ THỐNG SPAWN NHÂN VẬT & HIỆU ỨNG
-       ========================================== */
-    const enemies = [];
-    const particles = [];
-    const MAX_ENEMIES = 20;
-
-    // Hàm tạo một nhân vật Cute 3D (Cấu trúc con lật đật / người tuyết)
-    function createCuteCharacter() {
-        const group = new THREE.Group();
-        const colors = [0xff3b30, 0xff9500, 0xffcc00, 0x4cd964, 0x5ac8fa, 0x007aff, 0x5856d6, 0xff2d55];
-        const color = colors[Math.floor(Math.random() * colors.length)];
-        const material = new THREE.MeshPhongMaterial({ color: color, shininess: 80 });
-
-        // Thân
-        const bodyGeo = new THREE.SphereGeometry(0.3, 16, 16);
-        const body = new THREE.Mesh(bodyGeo, material);
-        body.position.y = 0.3;
-        group.add(body);
-
-        // Đầu
-        const headGeo = new THREE.SphereGeometry(0.2, 16, 16);
-        const head = new THREE.Mesh(headGeo, material);
-        head.position.y = 0.7;
-        group.add(head);
-
-        // Mắt (Màu đen)
-        const eyeMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
-        const eyeGeo = new THREE.SphereGeometry(0.04, 8, 8);
-        const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
-        eyeL.position.set(-0.08, 0.75, 0.17);
-        const eyeR = new THREE.Mesh(eyeGeo, eyeMat);
-        eyeR.position.set(0.08, 0.75, 0.17);
-        group.add(eyeL);
-        group.add(eyeR);
-
-        // Đặt vị trí ngẫu nhiên trên "mặt đất"
-        group.position.set((Math.random() - 0.5) * 6, -1, groundZ - Math.random() * 4);
+    <script>
+        // --- 1. BIẾN TOÀN CỤC ---
+        let scene, camera, renderer, videoTexture;
+        let score = 0;
+        let isFrontCam = false; // Mặc định camera sau
+        let activeStream = null;
         
-        // Lưu dữ liệu để Hit-test (Gắn hitbox)
-        group.hitRadius = 0.5;
-        group.color = color;
+        // Quản lý Game
+        const enemies = [];
+        const particles = [];
+        const MAX_ENEMIES = 20; // Giới hạn nhân vật
+        let raycaster = new THREE.Raycaster();
+        let pointer = new THREE.Vector2(-1, -1);
         
-        return group;
-    }
+        // Cursor ngón tay
+        let cursorMesh;
 
-    // Logic Sinh sản liên tục
-    setInterval(() => {
-        if (enemies.length < MAX_ENEMIES && handTrackingRunning) {
-            const enemy = createCuteCharacter();
-            scene.add(enemy);
-            enemies.push(enemy);
-        }
-    }, 1000);
+        // UI
+        const scoreEl = document.getElementById('score');
+        const loadingEl = document.getElementById('loading');
+        const videoEl = document.getElementById('videoElement');
+        const camToggleBtn = document.getElementById('cam-toggle');
 
-    // Hiệu ứng hạt nổ (Particle Explosion)
-    function createExplosion(position, color) {
-        const particleCount = 25;
-        const particleGeo = new THREE.BoxGeometry(0.08, 0.08, 0.08);
-        const particleMat = new THREE.MeshBasicMaterial({ color: color });
+        // --- 2. KHỞI TẠO THREE.JS ---
+        function initThreeJS() {
+            const container = document.getElementById('ar-container');
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 5;
 
-        for (let i = 0; i < particleCount; i++) {
-            const p = new THREE.Mesh(particleGeo, particleMat);
-            p.position.copy(position);
-            // Vận tốc văng ngẫu nhiên
-            p.velocity = new THREE.Vector3(
-                (Math.random() - 0.5) * 0.2,
-                (Math.random() - 0.5) * 0.2,
-                (Math.random() - 0.5) * 0.2
-            );
-            p.life = 1.0; // Thời gian sống
-            scene.add(p);
-            particles.push(p);
-        }
-    }
+            renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            container.appendChild(renderer.domElement);
 
-    /* ==========================================
-       PHẦN 3: ĐÁNH DẤU FINGER CURSOR & TƯƠNG TÁC
-       ========================================== */
-    
-    // Con trỏ laser (Cursor) đại diện cho đầu ngón tay trong 3D
-    const cursorGeo = new THREE.SphereGeometry(0.1, 16, 16);
-    const cursorMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.8 });
-    const cursor = new THREE.Mesh(cursorGeo, cursorMat);
-    scene.add(cursor);
+            // Ánh sáng
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+            const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            dirLight.position.set(0, 10, 5);
+            scene.add(dirLight);
 
-    const raycaster = new THREE.Raycaster();
-    const finger2D = new THREE.Vector2(-2, -2); // Chặn ở ngoài màn hình khi chưa nhận diện
+            // Con trỏ ngón tay (Vòng tròn phát sáng)
+            const cursorGeo = new THREE.RingGeometry(0.1, 0.15, 32);
+            const cursorMat = new THREE.MeshBasicMaterial({ color: 0x00ff00, side: THREE.DoubleSide, transparent: true, opacity: 0.8 });
+            cursorMesh = new THREE.Mesh(cursorGeo, cursorMat);
+            scene.add(cursorMesh);
 
-    /* ==========================================
-       PHẦN 4: MEDIAPIPE HAND TRACKING & CAMERA
-       ========================================== */
-    const hands = new Hands({
-        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
-    });
-
-    hands.setOptions({
-        maxNumHands: 1,
-        modelComplexity: 1, // 0 nhẹ nhàng, 1 chuẩn xác
-        minDetectionConfidence: 0.6,
-        minTrackingConfidence: 0.6
-    });
-
-    hands.onResults((results) => {
-        handTrackingRunning = true;
-        // Ẩn màn hình loading khi AI đã chạy
-        if(loadingScreen.style.opacity !== '0') {
-            loadingScreen.style.opacity = '0';
-            setTimeout(() => loadingScreen.style.display = 'none', 500);
+            window.addEventListener('resize', onWindowResize, false);
+            animate();
+            spawnLoop();
         }
 
-        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-            // Lấy điểm số 8: Đầu ngón trỏ (Index Finger Tip)
-            const indexTip = results.multiHandLandmarks[0][8];
-            
-            // Xử lý lật tọa độ nếu dùng cam trước (hiệu ứng gương)
-            let xPos = indexTip.x;
-            if (isFlipped) xPos = 1 - xPos;
+        // --- 3. QUẢN LÝ CAMERA ---
+        async function startCamera() {
+            if (activeStream) {
+                activeStream.getTracks().forEach(track => track.stop());
+            }
+            const constraints = {
+                video: { facingMode: isFrontCam ? "user" : "environment", width: 640, height: 480 }
+            };
+            try {
+                activeStream = await navigator.mediaDevices.getUserMedia(constraints);
+                videoEl.srcObject = activeStream;
+                videoEl.play();
 
-            // Chuyển đổi tọa độ 2D của ngón tay (0 -> 1) sang chuẩn NDC của Three.js (-1 -> 1)
-            finger2D.x = (xPos * 2) - 1;
-            finger2D.y = -(indexTip.y * 2) + 1;
-            
-            // Hiện con trỏ
-            cursor.visible = true;
-        } else {
-            // Giấu con trỏ nếu không thấy tay
-            finger2D.set(-2, -2);
-            cursor.visible = false;
-        }
-    });
+                // Gắn video làm background cho không gian 3D
+                videoTexture = new THREE.VideoTexture(videoEl);
+                videoTexture.minFilter = THREE.LinearFilter;
+                videoTexture.magFilter = THREE.LinearFilter;
+                videoTexture.format = THREE.RGBFormat;
+                scene.background = videoTexture;
 
-    // Quản lý luồng Camera
-    async function setupCamera() {
-        if (videoStream) {
-            videoStream.getTracks().forEach(track => track.stop());
+            } catch (err) {
+                alert("Lỗi truy cập camera: " + err.message);
+            }
         }
+
+        camToggleBtn.addEventListener('click', () => {
+            isFrontCam = !isFrontCam;
+            startCamera();
+        });
+
+        // --- 4. TÍCH HỢP MEDIAPIPE (NHẬN DIỆN NGÓN TAY) ---
+        const hands = new Hands({locateFile: (file) => {
+            return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+        }});
+        hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 1, // Dùng model nhẹ cho mobile
+            minDetectionConfidence: 0.7,
+            minTrackingConfidence: 0.7
+        });
         
-        isFlipped = (cameraMode === 'user');
-        // Lật CSS của video để tạo cảm giác soi gương nếu là cam trước
-        videoElement.style.transform = isFlipped ? 'scaleX(-1)' : 'scaleX(1)';
+        hands.onResults(onResults);
 
-        const constraints = {
-            video: { facingMode: cameraMode, width: { ideal: 1280 }, height: { ideal: 720 } },
-            audio: false
-        };
+        // Đưa khung hình video vào MediaPipe
+        const cameraUtils = new Camera(videoEl, {
+            onFrame: async () => {
+                await hands.send({image: videoEl});
+            },
+            width: 640,
+            height: 480
+        });
 
-        try {
-            videoStream = await navigator.mediaDevices.getUserMedia(constraints);
-            videoElement.srcObject = videoStream;
-            await new Promise(resolve => { videoElement.onloadedmetadata = () => resolve(); });
-            videoElement.play();
-            processVideoFrame(); // Bắt đầu gửi frame vào AI
-        } catch (error) {
-            alert("Không thể truy cập Camera. Vui lòng cấp quyền trong cài đặt trình duyệt!");
-            document.getElementById('loading-text').innerText = "Lỗi Camera!";
+        function onResults(results) {
+            if (loadingEl.style.display !== 'none') loadingEl.style.display = 'none';
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0];
+                // Landmark số 8 là đầu ngón trỏ (Index Finger Tip)
+                const indexFingerTip = landmarks[8];
+
+                // Chuyển đổi tọa độ [0,1] của MediaPipe sang NDC [-1,1] của Three.js
+                // Lưu ý lật trục X nếu dùng camera trước (gương)
+                let x = indexFingerTip.x;
+                if(isFrontCam) x = 1 - x; 
+
+                pointer.x = (x * 2) - 1;
+                pointer.y = -(indexFingerTip.y * 2) + 1;
+
+                // Di chuyển cursorMesh tới vị trí ngón tay
+                raycaster.setFromCamera(pointer, camera);
+                const distance = 4; // Khoảng cách giả lập mặt phẳng
+                raycaster.ray.at(distance, cursorMesh.position);
+
+                checkCollisions();
+            } else {
+                // Đưa cursor ra ngoài màn hình nếu không thấy tay
+                pointer.x = -2; pointer.y = -2;
+                cursorMesh.position.set(0, 0, 100);
+            }
         }
-    }
 
-    // Đẩy frame video vào MediaPipe liên tục
-    let lastVideoTime = -1;
-    async function processVideoFrame() {
-        if (!videoElement.paused && videoElement.currentTime !== lastVideoTime) {
-            lastVideoTime = videoElement.currentTime;
-            await hands.send({ image: videoElement });
-        }
-        requestAnimationFrame(processVideoFrame);
-    }
-
-    // Nút chuyển đổi Camera
-    camToggleBtn.addEventListener('click', () => {
-        cameraMode = cameraMode === 'environment' ? 'user' : 'environment';
-        setupCamera();
-    });
-
-    /* ==========================================
-       PHẦN 5: RENDER LOOP & LOGIC GAME
-       ========================================== */
-    function animate() {
-        requestAnimationFrame(animate);
-
-        // 1. Cập nhật vị trí con trỏ Laser trong không gian 3D
-        raycaster.setFromCamera(finger2D, camera);
-        // Đặt con trỏ cách camera 4 unit dọc theo tia ngón tay chỉ vào
-        cursor.position.copy(camera.position).add(raycaster.ray.direction.multiplyScalar(4));
-
-        // 2. Kiểm tra va chạm (Hit-test: Ngón tay đâm trúng nhân vật)
-        for (let i = enemies.length - 1; i >= 0; i--) {
-            const enemy = enemies[i];
-            enemy.rotation.y += 0.02; // Cho nhân vật xoay nhẹ nhàng
-
-            // Tính khoảng cách từ con trỏ ngón tay 3D đến trung tâm nhân vật
-            const distance = cursor.position.distanceTo(enemy.position);
+        // --- 5. HỆ THỐNG SPAWN NHÂN VẬT 3D ---
+        function createCharacter() {
+            // Tạo nhân vật dễ thương (khối có tai)
+            const group = new THREE.Group();
             
-            // Kích hoạt NỔ
-            if (distance < enemy.hitRadius) {
-                // Tạo hạt nổ
-                createExplosion(enemy.position, enemy.color);
+            const color = Math.random() * 0xffffff;
+            const bodyGeo = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+            const bodyMat = new THREE.MeshLambertMaterial({ color: color });
+            const body = new THREE.Mesh(bodyGeo, bodyMat);
+            group.add(body);
+
+            // Giả lập mặt đất: Xuất hiện ngẫu nhiên trong khoảng X, Y cố định dưới camera
+            group.position.x = (Math.random() - 0.5) * 6;
+            group.position.y = (Math.random() - 0.5) * 4;
+            group.position.z = -2 + (Math.random() * -3); // Sâu vào trong
+            
+            // Xoay nhẹ cho sinh động
+            group.rotation.x = Math.random() * Math.PI;
+            group.rotation.y = Math.random() * Math.PI;
+
+            // Thêm userData để nhận diện
+            group.userData = { isEnemy: true, velocity: new THREE.Vector3((Math.random()-0.5)*0.02, (Math.random()-0.5)*0.02, 0) };
+
+            scene.add(group);
+            enemies.push(group);
+        }
+
+        function spawnLoop() {
+            setInterval(() => {
+                if (enemies.length < MAX_ENEMIES) {
+                    createCharacter();
+                }
+            }, 800); // Mỗi 0.8s sinh 1 con
+        }
+
+        // --- 6. TƯƠNG TÁC VÀ HIỆU ỨNG PHÁT NỔ ---
+        function checkCollisions() {
+            raycaster.setFromCamera(pointer, camera);
+            
+            // Lấy danh sách các lưới (mesh) bên trong các group nhân vật
+            const meshes = enemies.map(e => e.children[0]);
+            const intersects = raycaster.intersectObjects(meshes);
+
+            if (intersects.length > 0) {
+                const hitMesh = intersects[0].object;
+                const hitGroup = hitMesh.parent;
                 
-                // Xoá nhân vật
-                scene.remove(enemy);
-                enemies.splice(i, 1);
+                // Kích hoạt nổ
+                createExplosion(hitGroup.position, hitMesh.material.color);
+                
+                // Xóa nhân vật
+                scene.remove(hitGroup);
+                const index = enemies.indexOf(hitGroup);
+                if (index > -1) enemies.splice(index, 1);
                 
                 // Cộng điểm
                 score++;
-                scoreElement.innerText = score;
+                scoreEl.innerText = score;
             }
         }
 
-        // 3. Cập nhật hiệu ứng hạt nổ (Animation)
-        for (let i = particles.length - 1; i >= 0; i--) {
-            const p = particles[i];
-            p.position.add(p.velocity); // Di chuyển
-            p.rotation.x += 0.1;
-            p.rotation.y += 0.1;
-            p.material.opacity = p.life;
-            p.material.transparent = true;
-            p.scale.multiplyScalar(0.95); // Thu nhỏ dần
-            p.life -= 0.03; // Giảm tuổi thọ
+        function createExplosion(position, color) {
+            const particleCount = 30;
+            const geo = new THREE.BufferGeometry();
+            const positions = new Float32Array(particleCount * 3);
+            const velocities = [];
 
-            if (p.life <= 0) {
-                scene.remove(p);
-                p.material.dispose();
-                p.geometry.dispose();
-                particles.splice(i, 1);
+            for (let i = 0; i < particleCount; i++) {
+                positions[i * 3] = position.x;
+                positions[i * 3 + 1] = position.y;
+                positions[i * 3 + 2] = position.z;
+
+                velocities.push(
+                    (Math.random() - 0.5) * 0.2,
+                    (Math.random() - 0.5) * 0.2,
+                    (Math.random() - 0.5) * 0.2
+                );
             }
+
+            geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            const mat = new THREE.PointsMaterial({ color: color, size: 0.1 });
+            const particleSystem = new THREE.Points(geo, mat);
+            
+            particleSystem.userData = { velocities: velocities, age: 0 };
+            scene.add(particleSystem);
+            particles.push(particleSystem);
         }
 
-        // 4. Render Scene
-        renderer.render(scene, camera);
-    }
+        // --- 7. VÒNG LẶP RENDER ---
+        function animate() {
+            requestAnimationFrame(animate);
 
-    // Xử lý khi xoay màn hình (Resize)
-    window.addEventListener('resize', () => {
-        camera.aspect = window.innerWidth / window.innerHeight;
-        camera.updateProjectionMatrix();
-        renderer.setSize(window.innerWidth, window.innerHeight);
-    });
+            // Xoay nhẹ các nhân vật
+            enemies.forEach(enemy => {
+                enemy.rotation.x += 0.01;
+                enemy.rotation.y += 0.01;
+                enemy.position.add(enemy.userData.velocity);
+            });
 
-    // Bắt đầu toàn bộ ứng dụng
-    setupCamera();
-    animate();
+            // Cập nhật hiệu ứng nổ
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let pSystem = particles[i];
+                let positions = pSystem.geometry.attributes.position.array;
+                
+                for (let j = 0; j < positions.length / 3; j++) {
+                    positions[j * 3] += pSystem.userData.velocities[j * 3];
+                    positions[j * 3 + 1] += pSystem.userData.velocities[j * 3 + 1];
+                    positions[j * 3 + 2] += pSystem.userData.velocities[j * 3 + 2];
+                }
+                pSystem.geometry.attributes.position.needsUpdate = true;
+                
+                // Làm mờ và xóa khi quá "già"
+                pSystem.userData.age += 1;
+                if (pSystem.userData.age > 30) {
+                    scene.remove(pSystem);
+                    particles.splice(i, 1);
+                }
+            }
 
-</script>
+            renderer.render(scene, camera);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // --- KHỞI ĐỘNG ---
+        initThreeJS();
+        startCamera().then(() => {
+            cameraUtils.start();
+        });
+    </script>
 </body>
 </html>
