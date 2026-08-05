@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>AR Foot Stomper - Game Dẫm Nhân Vật 3D</title>
+  
+  <!-- CSS Styles -->
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    body, html {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #000;
+    }
+
+    /* Video Camera Feed Background */
+    #webcam {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      object-fit: cover;
+      z-index: 1;
+      transform: scaleX(1); /* Mặc định cho camera sau */
+    }
+
+    /* 3D Canvas Overlay */
+    #canvas-container {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 2;
+      pointer-events: none;
+    }
+
+    /* HUD Interface - Glassmorphism */
+    #ui-layer {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 3;
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 20px;
+    }
+
+    .top-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      width: 100%;
+    }
+
+    .score-board {
+      background: rgba(255, 255, 255, 0.15);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      border-radius: 20px;
+      padding: 10px 22px;
+      color: #fff;
+      box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .score-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: rgba(255, 255, 255, 0.8);
+      font-weight: 600;
+    }
+
+    .score-value {
+      font-size: 32px;
+      font-weight: 800;
+      color: #00ffcc;
+      text-shadow: 0 0 12px rgba(0, 255, 204, 0.5);
+    }
+
+    .icon-btn {
+      pointer-events: auto;
+      background: rgba(255, 255, 255, 0.15);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      width: 52px;
+      height: 52px;
+      border-radius: 50%;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      color: #fff;
+      font-size: 22px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+    }
+
+    .icon-btn:active {
+      transform: scale(0.9);
+      background: rgba(255, 255, 255, 0.3);
+    }
+
+    .status-toast {
+      align-self: center;
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 30px;
+      padding: 10px 20px;
+      color: #fff;
+      font-size: 13px;
+      letter-spacing: 0.5px;
+      margin-bottom: 20px;
+      transition: opacity 0.3s ease;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .pulse-dot {
+      width: 8px;
+      height: 8px;
+      background-color: #00ffcc;
+      border-radius: 50%;
+      box-shadow: 0 0 8px #00ffcc;
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse {
+      0% { transform: scale(0.95); opacity: 0.7; }
+      50% { transform: scale(1.3); opacity: 1; }
+      100% { transform: scale(0.95); opacity: 0.7; }
+    }
+  </style>
+
+  <!-- External Libraries (CDN) -->
+  <!-- Three.js for 3D Graphics -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <!-- MediaPipe Pose & Camera Utils -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+  <!-- Camera Stream Background -->
+  <video id="webcam" playsinline></video>
+
+  <!-- Three.js Canvas Container -->
+  <div id="canvas-container"></div>
+
+  <!-- UI HUD Layer -->
+  <div id="ui-layer">
+    <div class="top-bar">
+      <div class="score-board">
+        <span class="score-label">Điểm</span>
+        <span id="score" class="score-value">0</span>
+      </div>
+      <button id="btn-flip" class="icon-btn" title="Đổi camera">📷</button>
+    </div>
+
+    <div id="status-toast" class="status-toast">
+      <div class="pulse-dot"></div>
+      <span id="status-text">Đang tải AI & khởi tạo Camera...</span>
+    </div>
+  </div>
+
+  <!-- Application Logic -->
+  <script>
+    // --- CẤU HÌNH & HẰNG SỐ ---
+    const MAX_CHARACTERS = 35;         // Giới hạn số lượng nhân vật trên sân
+    const SPAWN_INTERVAL_MS = 1200;    // Tần suất sinh nhân vật (ms)
+    const STOMP_RADIUS_3D = 0.55;      // Bán kính nhận diện dẫm chân (mét)
+    const GROUND_Y = -1.2;             // Cao độ mặt đất ảo trong không gian 3D
+
+    // --- BIẾN QUẢN LÝ TRẠNG THÁI ---
+    let score = 0;
+    let facingMode = 'environment';     // Default: Camera sau
+    let characters = [];
+    let particles = [];
+    let foot3DPositions = [];
+    let poseDetector = null;
+    let cameraUtil = null;
+
+    // --- THREE.JS SCENE SETUP ---
+    const container = document.getElementById('canvas-container');
+    const scene = new THREE.Scene();
+
+    const camera3D = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+    camera3D.position.set(0, 1.6, 3.5);
+    camera3D.lookAt(0, GROUND_Y, 0);
+
+    const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    container.appendChild(renderer.domElement);
+
+    // Ánh sáng
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+    scene.add(ambientLight);
+
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.6);
+    dirLight.position.set(5, 10, 7);
+    scene.add(dirLight);
+
+    // Mặt phẳng mặt đất ảo (Invisible Ground Plane dùng để Raycast)
+    const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -GROUND_Y);
+    const raycaster = new THREE.Raycaster();
+
+    // Vòng tròn hiển thị vị trí chân người dùng trên mặt đất (Visual Feet Markers)
+    const footMarkers = [createFootRing(), createFootRing()];
+    footMarkers.forEach(marker => scene.add(marker));
+
+    function createFootRing() {
+      const geometry = new THREE.RingGeometry(0.18, 0.25, 32);
+      const material = new THREE.MeshBasicMaterial({ 
+        color: 0x00ffcc, 
+        side: THREE.DoubleSide, 
+        transparent: true, 
+        opacity: 0.8 
+      });
+      const ring = new THREE.Mesh(geometry, material);
+      ring.rotation.x = Math.PI / 2;
+      ring.visible = false;
+      return ring;
+    }
+
+    // --- BỘ TẠO MÔ HÌNH NHÂN VẬT 3D TỰ ĐỘNG (PROCEDURAL GENERATOR) ---
+    // Tạo ra các nhân vật 3D nhỏ nhắn, rực rỡ mà không cần file GLTF ngoài
+    const CUTE_COLORS = [0xff4757, 0x2ed573, 0x1e90ff, 0xffa502, 0x9b59b6, 0xff6b81, 0x70a1ff];
+
+    function createCuteCharacter() {
+      const group = new THREE.Group();
+      const color = CUTE_COLORS[Math.floor(Math.random() * CUTE_COLORS.length)];
+      const material = new THREE.MeshStandardMaterial({ color: color, roughness: 0.3, metalness: 0.1 });
+
+      const type = Math.floor(Math.random() * 3);
+      let mainMesh;
+
+      if (type === 0) {
+        // Loại 1: Quái vật tròn (Blob monster)
+        mainMesh = new THREE.Mesh(new THREE.SphereGeometry(0.22, 16, 16), material);
+      } else if (type === 1) {
+        // Loại 2: Nhân vật hình nón (Cone friend)
+        mainMesh = new THREE.Mesh(new THREE.ConeGeometry(0.2, 0.4, 16), material);
+        mainMesh.position.y = 0.2;
+      } else {
+        // Loại 3: Hộp vuông dễ thương (Cube buddy)
+        mainMesh = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.35, 0.35), material);
+        mainMesh.position.y = 0.175;
+      }
+      group.add(mainMesh);
+
+      // Thêm 2 mắt cho nhân vật
+      const eyeGeo = new THREE.SphereGeometry(0.04, 8, 8);
+      const eyeMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+      const pupilMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
+
+      [-0.08, 0.08].forEach(xOffset => {
+        const eye = new THREE.Mesh(eyeGeo, eyeMat);
+        eye.position.set(xOffset, 0.1, 0.18);
+        const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.02, 8, 8), pupilMat);
+        pupil.position.set(xOffset, 0.1, 0.21);
+        group.add(eye);
+        group.add(pupil);
+      });
+
+      // Tọa độ ngẫu nhiên trên mặt đất
+      const spawnX = (Math.random() - 0.5) * 4.0;
+      const spawnZ = (Math.random() - 0.5) * 3.0 - 0.5;
+
+      group.position.set(spawnX, GROUND_Y, spawnZ);
+      group.userData = { 
+        baseY: GROUND_Y, 
+        phase: Math.random() * Math.PI * 2,
+        isAlive: true 
+      };
+
+      return group;
+    }
+
+    // --- CƠ CHẾ HIỆU ỨNG NỔ & ÂM THANH (AUDIO & PARTICLES) ---
+    // Giúp ứng dụng chạy hoàn toàn độc lập không cần file mp3 bên ngoài
+    function playPopSound() {
+      try {
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(250, audioCtx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(800, audioCtx.currentTime + 0.12);
+        gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.12);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.12);
+      } catch (e) { /* Trình duyệt chặn autoplay nếu chưa tương tác */ }
+    }
+
+    function createExplosion(position, color) {
+      const particleCount = 18;
+      const geom = new THREE.SphereGeometry(0.04, 8, 8);
+      const mat = new THREE.MeshBasicMaterial({ color: color, transparent: true });
+
+      for (let i = 0; i < particleCount; i++) {
+        const p = new THREE.Mesh(geom, mat.clone());
+        p.position.copy(position);
+        p.userData = {
+          velocity: new THREE.Vector3(
+            (Math.random() - 0.5) * 0.12,
+            Math.random() * 0.12 + 0.05,
+            (Math.random() - 0.5) * 0.12
+          ),
+          life: 1.0
+        };
+        scene.add(p);
+        particles.push(p);
+      }
+    }
+
+    // --- HỆ THỐNG SPAWN NHÂN VẬT CHỐNG RÒ RỈ BỘ NHỚ ---
+    setInterval(() => {
+      if (characters.length < MAX_CHARACTERS) {
+        const char = createCuteCharacter();
+        scene.add(char);
+        characters.push(char);
+      }
+    }, SPAWN_INTERVAL_MS);
+
+    function destroyCharacter(index) {
+      const char = characters[index];
+      if (!char) return;
+
+      playPopSound();
+      const color = char.children[0].material.color;
+      createExplosion(char.position, color);
+
+      // Giải phóng bộ nhớ WebGL
+      scene.remove(char);
+      char.traverse(child => {
+        if (child.geometry) child.geometry.dispose();
+        if (child.material) {
+          if (Array.isArray(child.material)) child.material.forEach(m => m.dispose());
+          else child.material.dispose();
+        }
+      });
+
+      characters.splice(index, 1);
+      score += 1;
+      document.getElementById('score').innerText = score;
+    }
+
+    // --- CHUYỂN ĐỔI TỌA ĐỘ TỪ MEDIAPIPE SANG KHÔNG GIAN 3D (AR CORE) ---
+    function projectLandmarkTo3D(landmark) {
+      // Chuẩn hóa tọa độ màn hình NDC (-1 đến 1)
+      let normX = landmark.x;
+      if (facingMode === 'user') normX = 1 - normX; // Lật tọa độ nếu dùng camera trước
+
+      const ndc = new THREE.Vector2(
+        (normX * 2) - 1,
+        -(landmark.y * 2) + 1
+      );
+
+      // Raycasting từ camera 3D chiếu xuống mặt phẳng đất
+      raycaster.setFromCamera(ndc, camera3D);
+      const target3D = new THREE.Vector3();
+      const hit = raycaster.ray.intersectPlane(groundPlane, target3D);
+      return hit ? target3D : null;
+    }
+
+    // --- MEDIAPIPE POSE RECOGNITION ---
+    function onPoseResults(results) {
+      foot3DPositions = [];
+
+      if (results.poseLandmarks) {
+        // Chỉ số khớp chân MediaPipe: 29, 30 (Gót chân); 31, 32 (Mũi bàn chân)
+        const footIndices = [29, 30, 31, 32];
+        const validFeet = [];
+
+        footIndices.forEach((idx, i) => {
+          const lm = results.poseLandmarks[idx];
+          if (lm && (lm.visibility === undefined || lm.visibility > 0.5)) {
+            const pos3D = projectLandmarkTo3D(lm);
+            if (pos3D) {
+              validFeet.push(pos3D);
+              foot3DPositions.push(pos3D);
+            }
+          }
+        });
+
+        // Cập nhật vị trí vòng tròn hiển thị chân
+        footMarkers[0].visible = validFeet.length > 0;
+        if (validFeet[0]) footMarkers[0].position.set(validFeet[0].x, GROUND_Y + 0.01, validFeet[0].z);
+
+        footMarkers[1].visible = validFeet.length > 1;
+        if (validFeet[1]) footMarkers[1].position.set(validFeet[1].x, GROUND_Y + 0.01, validFeet[1].z);
+      } else {
+        footMarkers[0].visible = false;
+        footMarkers[1].visible = false;
+      }
+    }
+
+    // --- KHỞI TẠO CAMERA & MEDIAPIPE ---
+    const videoElement = document.getElementById('webcam');
+
+    async function initCameraAndTracker() {
+      updateStatus("Đang khởi động Camera...");
+
+      if (cameraUtil) {
+        await cameraUtil.stop();
+      }
+
+      // Khởi tạo MediaPipe Pose
+      if (!poseDetector) {
+        poseDetector = new Pose({
+          locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+        });
+        poseDetector.setOptions({
+          modelComplexity: 1,
+          smoothLandmarks: true,
+          minDetectionConfidence: 0.5,
+          minTrackingConfidence: 0.5
+        });
+        poseDetector.onResults(onPoseResults);
+      }
+
+      // Thiết lập webcam stream
+      videoElement.style.transform = facingMode === 'user' ? 'scaleX(-1)' : 'scaleX(1)';
+
+      cameraUtil = new Camera(videoElement, {
+        onFrame: async () => {
+          await poseDetector.send({ image: videoElement });
+        },
+        facingMode: facingMode,
+        width: 1280,
+        height: 720
+      });
+
+      try {
+        await cameraUtil.start();
+        updateStatus("Sẵn sàng! Hãy đứng lùi ra xa để thấy chân");
+        setTimeout(() => {
+          document.getElementById('status-toast').style.opacity = '0';
+        }, 4000);
+      } catch (err) {
+        updateStatus("Lỗi truy cập Camera: " + err.message);
+      }
+    }
+
+    function updateStatus(text) {
+      const toast = document.getElementById('status-toast');
+      toast.style.opacity = '1';
+      document.getElementById('status-text').innerText = text;
+    }
+
+    // Nút chuyển camera
+    document.getElementById('btn-flip').addEventListener('click', () => {
+      facingMode = (facingMode === 'environment') ? 'user' : 'environment';
+      initCameraAndTracker();
+    });
+
+    // --- GAME LOOP & ANIMATIONS ---
+    const clock = new THREE.Clock();
+
+    function animate() {
+      requestAnimationFrame(animate);
+
+      const elapsedTime = clock.getElapsedTime();
+
+      // 1. Cập nhật hoạt họa nhún nhảy cho các nhân vật
+      characters.forEach((char) => {
+        char.position.y = char.userData.baseY + Math.abs(Math.sin(elapsedTime * 4 + char.userData.phase)) * 0.12;
+        char.rotation.y += 0.01;
+      });
+
+      // 2. Xử lý va chạm (Dẫm dập nhân vật)
+      if (foot3DPositions.length > 0) {
+        for (let i = characters.length - 1; i >= 0; i--) {
+          const char = characters[i];
+          for (let footPos of foot3DPositions) {
+            // Tính khoảng cách 2D trên mặt phẳng XZ
+            const dx = char.position.x - footPos.x;
+            const dz = char.position.z - footPos.z;
+            const dist = Math.sqrt(dx * dx + dz * dz);
+
+            if (dist < STOMP_RADIUS_3D) {
+              destroyCharacter(i);
+              break;
+            }
+          }
+        }
+      }
+
+      // 3. Cập nhật hiệu ứng hạt vỡ vụn (Explosion Particles)
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.position.add(p.userData.velocity);
+        p.userData.velocity.y -= 0.005; // Trọng lực
+        p.userData.life -= 0.025;
+        p.material.opacity = p.userData.life;
+
+        if (p.userData.life <= 0) {
+          scene.remove(p);
+          p.geometry.dispose();
+          p.material.dispose();
+          particles.splice(i, 1);
+        }
+      }
+
+      renderer.render(scene, camera3D);
+    }
+
+    // --- KHỞI ĐỘNG ỨNG DỤNG ---
+    window.addEventListener('resize', () => {
+      camera3D.aspect = window.innerWidth / window.innerHeight;
+      camera3D.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    initCameraAndTracker();
+    animate();
+  </script>
+</body>
+</html>
